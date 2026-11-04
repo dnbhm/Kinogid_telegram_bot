@@ -1,0 +1,28 @@
+[Unit]
+Description=Kinogid Vision Telegram Bot
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=kinogid
+Group=kinogid
+WorkingDirectory=/opt/kinogid-vision-bot
+EnvironmentFile=/opt/kinogid-vision-bot/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/kinogid-vision-bot/.venv/bin/python -m kinogid
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=45
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/kinogid-vision-bot/data
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
