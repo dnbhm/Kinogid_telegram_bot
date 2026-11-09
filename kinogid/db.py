@@ -74,6 +74,11 @@ class Database:
             );
             CREATE INDEX IF NOT EXISTS idx_jobs_due ON jobs(state, send_at);
             CREATE INDEX IF NOT EXISTS idx_deliveries_pending ON deliveries(job_id, state);
+            CREATE TABLE IF NOT EXISTS lesson_followups (
+                user_id INTEGER PRIMARY KEY,
+                step TEXT NOT NULL,
+                send_at TEXT
+            );
         """)
         # Если участника назначили администратором, удаляем его из всей статистики.
         with self.connection:
@@ -129,6 +134,31 @@ class Database:
 
     def set_onboarding_step(self, user_id: int, step: int) -> None:
         self._update_user(user_id, "onboarding_step=?", (step,))
+
+    def schedule_lesson_poll(self, user_id: int) -> None:
+        with self.connection:
+            self.connection.execute("""
+                INSERT OR IGNORE INTO lesson_followups (user_id, step, send_at)
+                VALUES (?, 'poll', ?)
+            """, (user_id, stamp(utcnow() + timedelta(minutes=30))))
+
+    def next_lesson_followup(self) -> sqlite3.Row | None:
+        return self.connection.execute("""
+            SELECT f.*, u.notifications, u.blocked
+            FROM lesson_followups f
+            LEFT JOIN users u ON u.user_id = f.user_id
+            WHERE f.send_at <= ?
+            ORDER BY f.send_at, f.user_id LIMIT 1
+        """, (stamp(),)).fetchone()
+
+    def update_lesson_followup(
+        self, user_id: int, step: str, delay: timedelta | None = None
+    ) -> None:
+        send_at = stamp(utcnow() + delay) if delay is not None else None
+        with self.connection:
+            self.connection.execute("""
+                UPDATE lesson_followups SET step=?, send_at=? WHERE user_id=?
+            """, (step, send_at, user_id))
 
     def _update_user(self, user_id: int, fields: str, values: tuple) -> None:
         if user_id in self.admin_ids:

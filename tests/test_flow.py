@@ -1,6 +1,8 @@
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, Dispatcher
@@ -11,6 +13,7 @@ from kinogid import content
 from kinogid.config import Config
 from kinogid.db import Database
 from kinogid.handlers import TrackingMiddleware, build_router
+from kinogid.worker import deliver_lesson_followup
 
 ADMIN = 759470806
 
@@ -85,6 +88,39 @@ class FlowTests(unittest.IsolatedAsyncioTestCase):
 
     def texts(self):
         return [call.text for call in self.session.calls if call.__api_method__ == "sendMessage"]
+
+    async def test_lesson_poll_and_guide_follow_the_requested_schedule(self):
+        start = datetime(2026, 11, 9, 12, tzinfo=timezone.utc)
+        with patch("kinogid.db.utcnow", return_value=start) as clock:
+            await self.message("/start")
+            welcome = self.session.calls[-1].reply_markup.inline_keyboard
+            self.assertEqual(welcome[0][0].url, content.CLUB_URL)
+            self.assertEqual(welcome[1][0].callback_data, "lesson:show")
+
+            await self.click("lesson:show")
+            self.assertEqual(self.session.calls[-2].__api_method__, "sendPhoto")
+            self.assertEqual(self.texts()[-1], content.LESSON)
+            self.assertEqual(self.session.calls[-1].reply_markup.inline_keyboard[0][0].url,
+                             content.LESSON_URL)
+
+            clock.return_value = start + timedelta(minutes=29)
+            await self.click("lesson:show")
+            self.assertIsNone(self.db.next_lesson_followup())
+            clock.return_value += timedelta(minutes=1)
+            poll = self.db.next_lesson_followup()
+            await deliver_lesson_followup(self.bot, self.db, poll)
+            self.assertEqual(self.texts()[-1], "кто ты в кино?")
+            self.assertEqual(len(self.session.calls[-1].reply_markup.inline_keyboard), 5)
+            self.assertIsNone(self.db.next_lesson_followup())
+
+            clock.return_value += timedelta(minutes=1)
+            await deliver_lesson_followup(self.bot, self.db, self.db.next_lesson_followup())
+            self.assertEqual(self.texts()[-1], content.GUIDE[0])
+            self.assertIsNone(self.db.next_lesson_followup())
+
+            await self.click("role:editor")
+            self.assertEqual(self.db.user(100)["role"], "editor")
+            self.assertEqual(self.texts()[-1], content.ACK)
 
     async def test_full_onboarding_role_and_training(self):
         await self.message("/start instagram")

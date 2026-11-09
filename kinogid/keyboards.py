@@ -1,12 +1,19 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .content import ROLES
+from .content import CLUB_URL, LESSON_URL, ROLES
 
 
-def join_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Вступить в киноклуб 🎬", callback_data="club:join")
-    ]])
+def welcome_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Вступить в киноклуб", url=CLUB_URL)],
+        [InlineKeyboardButton(text="Получить урок", callback_data="lesson:show")],
+    ])
+
+
+def lesson_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="ЗАБРАТЬ УРОК", url=LESSON_URL)],
+    ])
 
 
 def profile_keyboard(role: str | None = None, interested: bool = False) -> InlineKeyboardMarkup:

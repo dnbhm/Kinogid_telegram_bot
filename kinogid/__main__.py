@@ -12,7 +12,7 @@ from . import content
 from .config import Config
 from .db import Database
 from .handlers import TrackingMiddleware, build_router
-from .worker import broadcast_worker
+from .worker import broadcast_worker, lesson_worker
 
 log = logging.getLogger("kinogid")
 
@@ -48,7 +48,7 @@ async def main() -> None:
         link_preview=LinkPreviewOptions(is_disabled=True),
     ))
     db = Database(config.db_path, config.admin_ids)
-    worker = None
+    workers = []
     try:
         me = await bot.get_me()
         log.info("Запуск @%s", me.username)
@@ -61,7 +61,10 @@ async def main() -> None:
         dispatcher.message.outer_middleware(TrackingMiddleware())
         dispatcher.callback_query.outer_middleware(TrackingMiddleware())
         dispatcher.include_router(build_router(config))
-        worker = asyncio.create_task(broadcast_worker(bot, db))
+        workers = [
+            asyncio.create_task(broadcast_worker(bot, db)),
+            asyncio.create_task(lesson_worker(bot, db)),
+        ]
         await dispatcher.start_polling(
             bot,
             allowed_updates=dispatcher.resolve_used_update_types(),
@@ -69,8 +72,9 @@ async def main() -> None:
             close_bot_session=False,
         )
     finally:
-        if worker:
+        for worker in workers:
             worker.cancel()
+        for worker in workers:
             with suppress(asyncio.CancelledError):
                 await worker
         await bot.session.close()

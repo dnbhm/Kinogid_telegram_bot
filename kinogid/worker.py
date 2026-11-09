@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import timedelta
 
 from aiogram import Bot
 from aiogram.exceptions import (
@@ -12,8 +13,46 @@ from aiogram.exceptions import (
 )
 
 from .db import Database
+from .handlers import send_profile, show_guide
 
 log = logging.getLogger(__name__)
+
+
+async def deliver_lesson_followup(bot: Bot, db: Database, followup) -> None:
+    user_id = followup["user_id"]
+    step = followup["step"]
+    if followup["notifications"] == 0 or followup["blocked"]:
+        db.update_lesson_followup(user_id, "done")
+        return
+    try:
+        if step == "poll":
+            await send_profile(bot, user_id, db)
+        else:
+            await show_guide(bot, user_id)
+    except TelegramForbiddenError:
+        db.set_blocked(user_id, True)
+        db.update_lesson_followup(user_id, "done")
+    except TelegramBadRequest:
+        log.warning("Telegram отклонил сообщение сценария урока: %s", step)
+        db.update_lesson_followup(user_id, "done")
+    except TelegramRetryAfter as exc:
+        db.update_lesson_followup(user_id, step, timedelta(seconds=max(exc.retry_after, 1)))
+    except TelegramAPIError:
+        log.warning("Не удалось отправить сообщение сценария урока: %s", step)
+        db.update_lesson_followup(user_id, step, timedelta(minutes=1))
+    else:
+        if step == "poll":
+            db.update_lesson_followup(user_id, "guide", timedelta(minutes=1))
+        else:
+            db.update_lesson_followup(user_id, "done")
+
+
+async def lesson_worker(bot: Bot, db: Database) -> None:
+    while True:
+        followup = db.next_lesson_followup()
+        if followup:
+            await deliver_lesson_followup(bot, db, followup)
+        await asyncio.sleep(0.1 if followup else 1)
 
 
 async def deliver_job(bot: Bot, db: Database, job) -> None:

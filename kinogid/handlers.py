@@ -1,6 +1,7 @@
 import logging
 import math
 from html import escape
+from pathlib import Path
 
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
@@ -10,16 +11,18 @@ from aiogram.types import (
     CallbackQuery,
     ChatMemberUpdated,
     ErrorEvent,
+    FSInputFile,
     Message,
 )
 
 from . import content
 from .config import Config
 from .db import AUDIENCES, Database, utcnow
-from .keyboards import confirm_keyboard, join_keyboard, menu_keyboard, profile_keyboard
+from .keyboards import confirm_keyboard, lesson_keyboard, menu_keyboard, profile_keyboard, welcome_keyboard
 from .utils import csv_bytes, local_time, parse_send_at
 
 log = logging.getLogger(__name__)
+LESSON_PHOTO = Path(__file__).with_name("lesson.png")
 
 
 class TrackingMiddleware(BaseMiddleware):
@@ -261,15 +264,16 @@ def build_router(config: Config) -> Router:
         )
 
     @public.message(CommandStart())
-    async def start(message: Message, db: Database):
-        row = db.user(message.from_user.id)
-        if row and row["joined_at"] and row["onboarding_step"] > len(content.GUIDE):
-            text = "ты уже в зале ✦ выбирай, что посмотрим 🎬"
-            if not row["notifications"]:
-                text += "\n\nсообщения отключены. чтобы снова получать посты, нажми /club"
-            await message.answer(text, reply_markup=menu_keyboard(config.club_chat_url))
-            return
-        await message.answer(content.WELCOME, reply_markup=join_keyboard())
+    async def start(message: Message):
+        await message.answer(content.WELCOME, reply_markup=welcome_keyboard())
+
+    @public.callback_query(F.data == "lesson:show")
+    async def lesson(query: CallbackQuery, bot: Bot, db: Database):
+        await query.answer()
+        chat_id = query.from_user.id
+        await bot.send_photo(chat_id, FSInputFile(LESSON_PHOTO))
+        await bot.send_message(chat_id, content.LESSON, reply_markup=lesson_keyboard())
+        db.schedule_lesson_poll(chat_id)
 
     @public.message(Command("club"))
     async def club(message: Message, bot: Bot, db: Database):
