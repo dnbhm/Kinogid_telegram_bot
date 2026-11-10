@@ -12,6 +12,8 @@ from aiogram.types import (
     ChatMemberUpdated,
     ErrorEvent,
     FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     Message,
 )
 
@@ -51,8 +53,12 @@ async def send_profile(bot: Bot, chat_id: int, db: Database, *, summary: bool = 
 
 
 async def show_guide(bot: Bot, chat_id: int) -> None:
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Вступить в киноклуб", url=content.CLUB_URL)]
+    ])
+
     for part in content.GUIDE:
-        await bot.send_message(chat_id, part)
+        await bot.send_message(chat_id, part, reply_markup=keyboard)
 
 
 async def join_club(bot: Bot, chat_id: int, db: Database, config: Config) -> None:
