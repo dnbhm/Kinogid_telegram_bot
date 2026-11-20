@@ -12,8 +12,9 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramServerError,
 )
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import FSInputFile, InlineKeyboardMarkup
 
+from . import intensive
 from .db import Database
 from .handlers import send_profile, show_guide
 
@@ -59,8 +60,13 @@ async def lesson_worker(bot: Bot, db: Database) -> None:
 
 async def deliver_job(bot: Bot, db: Database, job) -> None:
     job_id = job["id"]
-    message_ids = json.loads(job["source_message_ids"]) if job["source_message_ids"] else [job["source_message_id"]]
-    markup = InlineKeyboardMarkup.model_validate_json(job["reply_markup_json"]) if job["reply_markup_json"] else None
+    builtin = job["content_kind"] == "intensive"
+    message_ids = [0, 1] if builtin else (
+        json.loads(job["source_message_ids"]) if job["source_message_ids"] else [job["source_message_id"]]
+    )
+    markup = intensive.keyboard() if builtin else (
+        InlineKeyboardMarkup.model_validate_json(job["reply_markup_json"]) if job["reply_markup_json"] else None
+    )
     while True:
         current = db.job(job_id)
         if not current or current["state"] != "running":
@@ -78,11 +84,22 @@ async def deliver_job(bot: Bot, db: Database, job) -> None:
             continue
         attempts = db.attempt(job_id, user_id)
         try:
-            options = {"reply_markup": markup} if markup and part == len(message_ids) - 1 else {}
-            await bot.copy_message(
-                chat_id=user_id, from_chat_id=job["source_chat_id"],
-                message_id=message_ids[part], **options,
-            )
+            if builtin and part == 0:
+                photo = await bot.send_photo(
+                    chat_id=user_id, photo=current["media_file_id"] or FSInputFile(intensive.PHOTO),
+                )
+                if photo.photo:
+                    db.set_job_media(job_id, photo.photo[-1].file_id)
+            elif builtin:
+                await bot.send_message(
+                    chat_id=user_id, text=intensive.TEXT, parse_mode="HTML", reply_markup=markup,
+                )
+            else:
+                options = {"reply_markup": markup} if markup and part == len(message_ids) - 1 else {}
+                await bot.copy_message(
+                    chat_id=user_id, from_chat_id=job["source_chat_id"],
+                    message_id=message_ids[part], **options,
+                )
         except TelegramRetryAfter as exc:
             # Лимит Telegram действует на бота; ждём, не помечая адресата доставленным.
             await asyncio.sleep(max(exc.retry_after, 1))

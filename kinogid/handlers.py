@@ -176,74 +176,23 @@ def build_router(config: Config) -> Router:
         await message.answer_document(document, caption="Пользователи без администраторов. Даты в CSV — UTC.")
 
     @admin.message(Command("intensive"))
-    async def prepare_intensive(message: Message, db: Database, bot: Bot):
-        existing = db.campaign_job(intensive.CAMPAIGN_KEY)
-        if existing:
-            if existing["state"] == "draft":
-                if utcnow() >= intensive.SEND_AT:
-                    await message.answer("Время рассылки уже прошло. Неподтверждённый пост не будет отправлен автоматически.")
-                    return
-                await message.answer(
-                    f"Рассылка интенсива #{existing['id']} уже подготовлена. "
-                    "Проверьте её копию выше и подтвердите отправку на 21 ноября в 12:00 по Москве.",
-                    reply_markup=confirm_keyboard(existing["id"]),
-                )
-            else:
-                await message.answer(
-                    f"Рассылка интенсива #{existing['id']} уже существует: {existing['state']}. "
-                    "Повторная рассылка не создаётся. Результат: /jobs"
-                )
-            return
-        if utcnow() >= intensive.SEND_AT:
-            await message.answer(
-                "Согласованное время — 21 ноября 2026, 12:00 по Москве — уже прошло. "
-                "Рассылка автоматически на другое время не переносится."
-            )
-            return
-        source = message.reply_to_message
-        if source and (source.media_group_id or not source.photo or not source.caption):
-            await message.answer(
-                "Ответьте командой /intensive на исходный пост с фото и подписью. "
-                "Нужен один пост, не альбом и не сообщение с инструкцией про кнопку. "
-                "Без ответа на сообщение команда подготовит фото и полный текст отдельно."
-            )
-            return
-        await message.answer("Предпросмотр рассылки интенсива:")
-        try:
-            if source:
-                # Caption не передаём: сохраняем исходную длинную подпись и её entities.
-                preview = await bot.copy_message(
-                    chat_id=message.chat.id, from_chat_id=message.chat.id,
-                    message_id=source.message_id, reply_markup=intensive.keyboard(),
-                )
-                message_ids = [preview.message_id]
-            else:
-                photo = await bot.send_photo(message.chat.id, FSInputFile(intensive.PHOTO))
-                text = await bot.send_message(
-                    message.chat.id, intensive.TEXT, parse_mode="HTML", reply_markup=intensive.keyboard()
-                )
-                message_ids = [photo.message_id, text.message_id]
-        except (TelegramAPIError, OSError):
-            await message.answer(
-                "Не удалось подготовить копию. Рассылка не создана. "
-                "Попробуйте переслать исходный пост заново или вызвать /intensive без ответа на сообщение."
-            )
-            return
-        job_id = db.create_job(
-            message.from_user.id, message.chat.id, message_ids[0], "all", intensive.SEND_AT,
-            message_ids=message_ids, reply_markup_json=intensive.keyboard().model_dump_json(),
-            audience_at_send=True, campaign_key=intensive.CAMPAIGN_KEY,
+    async def show_automatic_intensive(message: Message, db: Database, bot: Bot):
+        job_id = intensive.register_automatic(db)
+        await bot.send_photo(message.chat.id, FSInputFile(intensive.PHOTO))
+        await bot.send_message(
+            message.chat.id, intensive.TEXT, parse_mode="HTML", reply_markup=intensive.keyboard()
         )
+        if job_id is None:
+            await message.answer("22 ноября 2026, 12:00 МСК уже прошло; новая рассылка не создаётся.")
+            return
+        job = db.job(job_id)
         await message.answer(
-            f"<b>Рассылка интенсива #{job_id}</b>\n"
-            "Когда: <b>21 ноября 2026, 12:00 — Москва</b>\n"
-            "Кому: всем пользователям на момент начала отправки, независимо от этапа.\n"
-            f"Сейчас подходящих пользователей: {db.audience_count('all')}.\n"
-            "Отписавшиеся, заблокировавшие бота и администраторы исключаются.\n\n"
-            "Проверьте фото, текст и кнопку выше. Только после подтверждения рассылка попадёт в очередь. "
-            "Не удаляйте копию поста до окончания отправки.\n"
-            "Проверить: /jobs · отменить: /cancel " + str(job_id),
-            reply_markup=confirm_keyboard(job_id),
+            f"Автоматическая рассылка #{job_id}: {job['state']}.\n"
+            "Дата: 22 ноября 2026, 12:00 по Москве.\n"
+            "Она регистрируется при запуске бота. Подтверждать ничего не нужно.\n"
+            "Получатели: все пользователи на момент начала отправки независимо от этапа, "
+            "кроме отписавшихся, заблокировавших бота и администраторов.\n"
+            "Проверить: /jobs · отменить: /cancel " + str(job_id)
         )
 
     @admin.message(Command("post"))
@@ -297,11 +246,6 @@ def build_router(config: Config) -> Router:
             return
         job_id = int(parts[2])
         if parts[1] == "confirm":
-            job = db.job(job_id)
-            if (job and job["state"] == "draft" and job["campaign_key"] == intensive.CAMPAIGN_KEY
-                    and utcnow() >= intensive.SEND_AT):
-                await query.answer("Время рассылки уже прошло. Пост не поставлен в очередь.", show_alert=True)
-                return
             changed = db.confirm_job(job_id)
             text = f"Рассылка #{job_id} подтверждена. Результат появится здесь и в /jobs."
         else:

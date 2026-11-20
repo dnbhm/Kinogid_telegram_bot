@@ -87,6 +87,7 @@ class Database:
                 "source_message_ids": "TEXT", "reply_markup_json": "TEXT",
                 "audience_at_send": "INTEGER NOT NULL DEFAULT 0",
                 "audience_ready": "INTEGER NOT NULL DEFAULT 0", "campaign_key": "TEXT",
+                "content_kind": "TEXT NOT NULL DEFAULT 'copy'", "media_file_id": "TEXT",
             },
             "deliveries": {"next_part": "INTEGER NOT NULL DEFAULT 0"},
         }
@@ -255,6 +256,40 @@ class Database:
 
     def campaign_job(self, campaign_key: str) -> sqlite3.Row | None:
         return self.connection.execute("SELECT * FROM jobs WHERE campaign_key=?", (campaign_key,)).fetchone()
+
+    def ensure_automatic_campaign(
+        self, campaign_key: str, send_at: datetime, *, content_kind: str,
+        superseded_keys: tuple[str, ...] = (), now: datetime | None = None,
+    ) -> int | None:
+        """Атомарно создаёт готовую очередь один раз, сохраняя отмену и результат отправки."""
+        if content_kind != "intensive":
+            raise ValueError("Unknown automatic campaign")
+        current_time = now or utcnow()
+        with self.connection:
+            for old_key in superseded_keys:
+                self.connection.execute("""
+                    UPDATE jobs SET state='cancelled', error='Заменена автоматической рассылкой на 22 ноября'
+                    WHERE campaign_key=? AND state IN ('draft', 'pending', 'running')
+                """, (old_key,))
+            job = self.campaign_job(campaign_key)
+            if job:
+                # Восстанавливаем только незавершённую регистрацию, не отменённую рассылку.
+                if job["state"] == "draft":
+                    self.connection.execute("UPDATE jobs SET state='pending' WHERE id=?", (job["id"],))
+                return job["id"]
+            if current_time >= send_at:
+                return None
+            cursor = self.connection.execute("""
+                INSERT INTO jobs (admin_id, source_chat_id, source_message_id, audience,
+                                  created_at, send_at, state, audience_at_send, campaign_key, content_kind)
+                VALUES (?, ?, 0, 'all', ?, ?, 'pending', 1, ?, ?)
+            """, (min(self.admin_ids), min(self.admin_ids), stamp(current_time), stamp(send_at),
+                  campaign_key, content_kind))
+            return cursor.lastrowid
+
+    def set_job_media(self, job_id: int, file_id: str) -> None:
+        with self.connection:
+            self.connection.execute("UPDATE jobs SET media_file_id=? WHERE id=?", (file_id, job_id))
 
     def _snapshot_audience(self, job) -> None:
         where, params = self._audience_sql(job["audience"])

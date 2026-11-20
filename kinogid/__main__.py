@@ -8,7 +8,7 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError, TelegramUnauthorizedError
 from aiogram.types import BotCommand, BotCommandScopeChat, LinkPreviewOptions
 
-from . import content
+from . import content, intensive
 from .config import Config
 from .db import Database
 from .handlers import TrackingMiddleware, build_router
@@ -50,6 +50,13 @@ async def main() -> None:
     db = Database(config.db_path, config.admin_ids)
     workers = []
     try:
+        automatic_job = intensive.register_automatic(db)
+        if automatic_job is not None:
+            job = db.job(automatic_job)
+            log.info("Рассылка интенсива #%s: %s; 22 ноября 2026, 12:00 МСК. Подтверждение не требуется.",
+                     automatic_job, job["state"])
+        else:
+            log.warning("22 ноября 2026, 12:00 МСК уже прошло; новая рассылка не создаётся.")
         me = await bot.get_me()
         log.info("Запуск @%s", me.username)
         await bot.delete_webhook(drop_pending_updates=False)

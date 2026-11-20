@@ -1,4 +1,4 @@
-"""Согласованная разовая рассылка: фото, затем полный текст с URL-кнопкой."""
+"""Автоматическая разовая рассылка: фото, затем полный текст с URL-кнопкой."""
 
 from datetime import datetime
 from pathlib import Path
@@ -6,9 +6,11 @@ from zoneinfo import ZoneInfo
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-CAMPAIGN_KEY = "intensive-2026-11-21-1200-msk"
-SEND_AT = datetime(2026, 11, 21, 12, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+CAMPAIGN_KEY = "intensive-2026-11-22-1200-msk-auto"
+SUPERSEDED_KEYS = ("intensive-2026-11-21-1200-msk",)
+SEND_AT = datetime(2026, 11, 22, 12, 0, tzinfo=ZoneInfo("Europe/Moscow"))
 PHOTO = Path(__file__).with_name("assets") / "intensive.png"
+PHOTO_SHA256 = "43919d0b36c85a9ba4d2ea1062fdef2f5443b05dc7af2288cba66dbf38d710e7"
 CLUB_URL = "https://t.me/+xb3ZBglvse5kMGEy"
 
 TEXT = """мы привыкли сидеть по эту сторону экрана и быть зрителями, но самое интересное начинается, когда понимаешь, как этот мир создаётся 🎥
@@ -58,3 +60,14 @@ def keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Вступить в киноклуб🎥", url=CLUB_URL)
     ]])
+
+
+def register_automatic(db, *, now: datetime | None = None) -> int | None:
+    """Вызывается при запуске приложения. Никаких сообщений администратору не требуется."""
+    import hashlib
+
+    if not PHOTO.is_file() or hashlib.sha256(PHOTO.read_bytes()).hexdigest() != PHOTO_SHA256:
+        raise ValueError("Не найдено исходное фото рассылки интенсива или файл был изменён")
+    return db.ensure_automatic_campaign(
+        CAMPAIGN_KEY, SEND_AT, content_kind="intensive", superseded_keys=SUPERSEDED_KEYS, now=now,
+    )
