@@ -35,7 +35,7 @@ class OfflineSession(BaseSession):
         name = method.__api_method__
         if name == "copyMessage":
             return MessageId(message_id=self.sequence)
-        if name in {"sendMessage", "sendDocument", "editMessageReplyMarkup"}:
+        if name in {"sendMessage", "sendDocument", "sendPhoto", "editMessageReplyMarkup"}:
             return Message.model_validate({
                 "message_id": self.sequence, "date": 1780000000,
                 "chat": {"id": int(method.chat_id), "type": "private"},

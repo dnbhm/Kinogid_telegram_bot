@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from datetime import timedelta
 
@@ -11,6 +12,7 @@ from aiogram.exceptions import (
     TelegramRetryAfter,
     TelegramServerError,
 )
+from aiogram.types import InlineKeyboardMarkup
 
 from .db import Database
 from .handlers import send_profile, show_guide
@@ -57,6 +59,8 @@ async def lesson_worker(bot: Bot, db: Database) -> None:
 
 async def deliver_job(bot: Bot, db: Database, job) -> None:
     job_id = job["id"]
+    message_ids = json.loads(job["source_message_ids"]) if job["source_message_ids"] else [job["source_message_id"]]
+    markup = InlineKeyboardMarkup.model_validate_json(job["reply_markup_json"]) if job["reply_markup_json"] else None
     while True:
         current = db.job(job_id)
         if not current or current["state"] != "running":
@@ -68,11 +72,16 @@ async def deliver_job(bot: Bot, db: Database, job) -> None:
         if not db.eligible(user_id, job["audience"]):
             db.delivery_result(job_id, user_id, "skipped")
             continue
+        part = db.delivery_part(job_id, user_id)
+        if part >= len(message_ids):
+            db.delivery_result(job_id, user_id, "sent")
+            continue
         attempts = db.attempt(job_id, user_id)
         try:
+            options = {"reply_markup": markup} if markup and part == len(message_ids) - 1 else {}
             await bot.copy_message(
                 chat_id=user_id, from_chat_id=job["source_chat_id"],
-                message_id=job["source_message_id"],
+                message_id=message_ids[part], **options,
             )
         except TelegramRetryAfter as exc:
             # Лимит Telegram действует на бота; ждём, не помечая адресата доставленным.
@@ -98,7 +107,7 @@ async def deliver_job(bot: Bot, db: Database, job) -> None:
         except TelegramAPIError:
             db.delivery_result(job_id, user_id, "failed", "Ошибка Telegram API")
         else:
-            db.delivery_result(job_id, user_id, "sent")
+            db.advance_delivery(job_id, user_id, len(message_ids))
         # Оставляем запас под ответы бота; платные ускоренные рассылки не используются.
         await asyncio.sleep(0.08)
 

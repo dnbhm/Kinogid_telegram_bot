@@ -1,5 +1,6 @@
 """SQLite: короткие транзакции, одна копия процесса бота на одну базу."""
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -80,6 +81,25 @@ class Database:
                 send_at TEXT
             );
         """)
+        # Дополняем существующую базу без удаления пользователей и старых рассылок.
+        additions = {
+            "jobs": {
+                "source_message_ids": "TEXT", "reply_markup_json": "TEXT",
+                "audience_at_send": "INTEGER NOT NULL DEFAULT 0",
+                "audience_ready": "INTEGER NOT NULL DEFAULT 0", "campaign_key": "TEXT",
+            },
+            "deliveries": {"next_part": "INTEGER NOT NULL DEFAULT 0"},
+        }
+        with self.connection:
+            for table, columns in additions.items():
+                existing = {row[1] for row in self.connection.execute(f"PRAGMA table_info({table})")}
+                for name, definition in columns.items():
+                    if name not in existing:
+                        self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+            self.connection.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_campaign
+                ON jobs(campaign_key) WHERE campaign_key IS NOT NULL
+            """)
         # Если участника назначили администратором, удаляем его из всей статистики.
         with self.connection:
             for admin_id in admin_ids:
@@ -217,16 +237,32 @@ class Database:
         return self.connection.execute(f"SELECT COUNT(*) FROM users WHERE {where}", params).fetchone()[0]
 
     def create_job(self, admin_id: int, source_chat_id: int, source_message_id: int,
-                   audience: str, send_at: datetime) -> int:
+                   audience: str, send_at: datetime, *, message_ids: list[int] | None = None,
+                   reply_markup_json: str | None = None, audience_at_send: bool = False,
+                   campaign_key: str | None = None) -> int:
         if admin_id not in self.admin_ids:
             raise ValueError("Admin required")
         self._audience_sql(audience)
         with self.connection:
             cursor = self.connection.execute("""
-                INSERT INTO jobs (admin_id, source_chat_id, source_message_id, audience, created_at, send_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (admin_id, source_chat_id, source_message_id, audience, stamp(), stamp(send_at)))
+                INSERT INTO jobs (admin_id, source_chat_id, source_message_id, audience, created_at,
+                                  send_at, source_message_ids, reply_markup_json, audience_at_send, campaign_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (admin_id, source_chat_id, source_message_id, audience, stamp(), stamp(send_at),
+                  json.dumps(message_ids) if message_ids else None, reply_markup_json,
+                  int(audience_at_send), campaign_key))
             return cursor.lastrowid
+
+    def campaign_job(self, campaign_key: str) -> sqlite3.Row | None:
+        return self.connection.execute("SELECT * FROM jobs WHERE campaign_key=?", (campaign_key,)).fetchone()
+
+    def _snapshot_audience(self, job) -> None:
+        where, params = self._audience_sql(job["audience"])
+        self.connection.execute(f"""
+            INSERT OR IGNORE INTO deliveries (job_id, user_id)
+            SELECT ?, user_id FROM users WHERE {where}
+        """, (job["id"], *params))
+        self.connection.execute("UPDATE jobs SET audience_ready=1 WHERE id=?", (job["id"],))
 
     def job(self, job_id: int) -> sqlite3.Row | None:
         return self.connection.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
@@ -236,11 +272,8 @@ class Database:
             job = self.job(job_id)
             if not job or job["state"] != "draft":
                 return False
-            where, params = self._audience_sql(job["audience"])
-            self.connection.execute(f"""
-                INSERT INTO deliveries (job_id, user_id)
-                SELECT ?, user_id FROM users WHERE {where}
-            """, (job_id, *params))
+            if not job["audience_at_send"]:
+                self._snapshot_audience(job)
             self.connection.execute("UPDATE jobs SET state='pending' WHERE id=?", (job_id,))
         return True
 
@@ -259,6 +292,8 @@ class Database:
                 ORDER BY send_at, id LIMIT 1
             """, (stamp(),)).fetchone()
             if job:
+                if job["audience_at_send"] and not job["audience_ready"]:
+                    self._snapshot_audience(job)
                 self.connection.execute("UPDATE jobs SET state='running' WHERE id=?", (job["id"],))
             return job
 
@@ -285,6 +320,26 @@ class Database:
             return self.connection.execute(
                 "SELECT attempts FROM deliveries WHERE job_id=? AND user_id=?", (job_id, user_id)
             ).fetchone()[0]
+
+    def delivery_part(self, job_id: int, user_id: int) -> int:
+        return self.connection.execute(
+            "SELECT next_part FROM deliveries WHERE job_id=? AND user_id=?", (job_id, user_id)
+        ).fetchone()[0]
+
+    def advance_delivery(self, job_id: int, user_id: int, part_count: int) -> None:
+        with self.connection:
+            cursor = self.connection.execute("""
+                UPDATE deliveries SET next_part=next_part+1, attempts=0
+                WHERE job_id=? AND user_id=? AND state='pending'
+            """, (job_id, user_id))
+            if cursor.rowcount and self.delivery_part(job_id, user_id) >= part_count:
+                self.connection.execute(
+                    "UPDATE deliveries SET state='sent', error=NULL WHERE job_id=? AND user_id=?",
+                    (job_id, user_id),
+                )
+                self.connection.execute(
+                    "UPDATE users SET posts_received=posts_received+1 WHERE user_id=?", (user_id,)
+                )
 
     def delivery_result(self, job_id: int, user_id: int, state: str, error: str | None = None) -> None:
         with self.connection:
