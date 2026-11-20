@@ -46,7 +46,7 @@ class AutomaticDatabaseTests(unittest.TestCase):
         job_id = self.register()
         job = self.db.job(job_id)
         self.assertEqual(job["state"], "pending")
-        self.assertEqual(job["send_at"], "2026-11-22T09:00:00+00:00")
+        self.assertEqual(job["send_at"], "2026-11-21T09:00:00+00:00")
         self.assertEqual(job["content_kind"], "intensive")
         with patch("kinogid.db.utcnow", return_value=intensive.SEND_AT - timedelta(seconds=1)):
             self.assertIsNone(self.db.next_job())
@@ -81,7 +81,7 @@ class AutomaticDatabaseTests(unittest.TestCase):
         self.assertEqual(self.register(), job_id)
         self.assertEqual(self.register(), job_id)
         self.assertEqual(len(self.db.recent_jobs()), 1)
-        self.assertEqual(self.db.job(job_id)["send_at"], "2026-11-22T09:00:00+00:00")
+        self.assertEqual(self.db.job(job_id)["send_at"], "2026-11-21T09:00:00+00:00")
 
     def test_restart_does_not_expand_an_already_started_audience(self):
         self.db.touch(person(100))
@@ -111,13 +111,37 @@ class AutomaticDatabaseTests(unittest.TestCase):
         self.assertEqual(self.db.job(job_id)["state"], "done")
         self.assertEqual(len(self.db.recent_jobs()), 1)
 
-    def test_previous_november_21_campaign_is_cancelled(self):
+    def test_previous_manual_campaign_is_cancelled(self):
         old_id = self.db.create_job(
             ADMIN, ADMIN, 11, "all", BEFORE, campaign_key=intensive.SUPERSEDED_KEYS[0])
         self.db.confirm_job(old_id)
         new_id = self.register()
         self.assertEqual(self.db.job(old_id)["state"], "cancelled")
         self.assertEqual(self.db.job(new_id)["state"], "pending")
+
+    def test_registered_november_22_queue_is_replaced_after_update_and_never_runs(self):
+        # Старая версия уже запущена на сервере и создала очередь на 22 ноября.
+        old_id = self.db.ensure_automatic_campaign(
+            "intensive-2026-11-22-1200-msk-auto", intensive.SEND_AT + timedelta(days=1),
+            content_kind="intensive", now=BEFORE,
+        )
+        self.db.close()
+        self.db = Database(self.path, frozenset({ADMIN}))
+        # Перезапуск после обновления до исправленной версии.
+        new_id = self.register()
+        self.assertNotEqual(new_id, old_id)
+        self.assertEqual(self.db.job(old_id)["state"], "cancelled")
+        self.assertEqual(self.db.job(new_id)["state"], "pending")
+        self.assertEqual(self.db.job(new_id)["send_at"], "2026-11-21T09:00:00+00:00")
+        with patch("kinogid.db.utcnow", return_value=intensive.SEND_AT):
+            self.assertEqual(self.db.next_job()["id"], new_id)
+        self.db.finish_job(new_id)
+        # Перезапуск и наступление 22 ноября не вызывают повторную рассылку.
+        self.db.close()
+        self.db = Database(self.path, frozenset({ADMIN}))
+        intensive.register_automatic(self.db, now=intensive.SEND_AT + timedelta(days=1))
+        with patch("kinogid.db.utcnow", return_value=intensive.SEND_AT + timedelta(days=1)):
+            self.assertIsNone(self.db.next_job())
 
     def test_first_install_after_deadline_does_not_send_stale_post(self):
         self.assertIsNone(intensive.register_automatic(self.db, now=intensive.SEND_AT))
@@ -251,7 +275,7 @@ class AutomaticStartupTests(unittest.IsolatedAsyncioTestCase):
             try:
                 job = db.campaign_job(intensive.CAMPAIGN_KEY)
                 self.assertEqual(job["state"], "pending")
-                self.assertEqual(job["send_at"], "2026-11-22T09:00:00+00:00")
+                self.assertEqual(job["send_at"], "2026-11-21T09:00:00+00:00")
                 self.assertEqual(db.stats()["total"], 0)
             finally:
                 db.close()
@@ -313,4 +337,4 @@ class AutomaticContentTests(unittest.TestCase):
         self.assertEqual(parser.stack, [])
         self.assertLessEqual(len(parser.text.encode("utf-16-le")) // 2, 4096)
         self.assertIn("с 21 по 23 ноября", parser.text)
-        self.assertEqual(intensive.SEND_AT.isoformat(), "2026-11-22T12:00:00+03:00")
+        self.assertEqual(intensive.SEND_AT.isoformat(), "2026-11-21T12:00:00+03:00")

@@ -6,9 +6,12 @@ from zoneinfo import ZoneInfo
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-CAMPAIGN_KEY = "intensive-2026-11-22-1200-msk-auto"
-SUPERSEDED_KEYS = ("intensive-2026-11-21-1200-msk",)
-SEND_AT = datetime(2026, 11, 22, 12, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+CAMPAIGN_KEY = "intensive-2026-11-21-1200-msk-auto"
+SUPERSEDED_KEYS = (
+    "intensive-2026-11-21-1200-msk",
+    "intensive-2026-11-22-1200-msk-auto",
+)
+SEND_AT = datetime(2026, 11, 21, 12, 0, tzinfo=ZoneInfo("Europe/Moscow"))
 PHOTO = Path(__file__).with_name("assets") / "intensive.png"
 PHOTO_SHA256 = "43919d0b36c85a9ba4d2ea1062fdef2f5443b05dc7af2288cba66dbf38d710e7"
 CLUB_URL = "https://t.me/+xb3ZBglvse5kMGEy"

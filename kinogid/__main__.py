@@ -53,10 +53,10 @@ async def main() -> None:
         automatic_job = intensive.register_automatic(db)
         if automatic_job is not None:
             job = db.job(automatic_job)
-            log.info("Рассылка интенсива #%s: %s; 22 ноября 2026, 12:00 МСК. Подтверждение не требуется.",
+            log.info("Рассылка интенсива #%s: %s; 21 ноября 2026, 12:00 МСК. Подтверждение не требуется.",
                      automatic_job, job["state"])
         else:
-            log.warning("22 ноября 2026, 12:00 МСК уже прошло; новая рассылка не создаётся.")
+            log.warning("21 ноября 2026, 12:00 МСК уже прошло; новая рассылка не создаётся.")
         me = await bot.get_me()
         log.info("Запуск @%s", me.username)
         await bot.delete_webhook(drop_pending_updates=False)

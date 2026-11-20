@@ -183,12 +183,12 @@ def build_router(config: Config) -> Router:
             message.chat.id, intensive.TEXT, parse_mode="HTML", reply_markup=intensive.keyboard()
         )
         if job_id is None:
-            await message.answer("22 ноября 2026, 12:00 МСК уже прошло; новая рассылка не создаётся.")
+            await message.answer("21 ноября 2026, 12:00 МСК уже прошло; новая рассылка не создаётся.")
             return
         job = db.job(job_id)
         await message.answer(
             f"Автоматическая рассылка #{job_id}: {job['state']}.\n"
-            "Дата: 22 ноября 2026, 12:00 по Москве.\n"
+            "Дата: 21 ноября 2026, 12:00 по Москве.\n"
             "Она регистрируется при запуске бота. Подтверждать ничего не нужно.\n"
             "Получатели: все пользователи на момент начала отправки независимо от этапа, "
             "кроме отписавшихся, заблокировавших бота и администраторов.\n"

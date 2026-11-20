@@ -268,7 +268,7 @@ class Database:
         with self.connection:
             for old_key in superseded_keys:
                 self.connection.execute("""
-                    UPDATE jobs SET state='cancelled', error='Заменена автоматической рассылкой на 22 ноября'
+                    UPDATE jobs SET state='cancelled', error='Заменена автоматической рассылкой на 21 ноября'
                     WHERE campaign_key=? AND state IN ('draft', 'pending', 'running')
                 """, (old_key,))
             job = self.campaign_job(campaign_key)
